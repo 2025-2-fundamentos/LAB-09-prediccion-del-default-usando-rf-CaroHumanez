@@ -92,3 +92,123 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+
+import os
+import gzip
+import json
+import pickle
+import pandas as pd
+from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import (
+    precision_score,
+    balanced_accuracy_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+)
+
+def cargar_datos(ruta_entrenamiento, ruta_prueba):
+    return (
+        pd.read_csv(ruta_entrenamiento, compression="zip"),
+        pd.read_csv(ruta_prueba, compression="zip"),
+    )
+
+def limpiar_datos(df):
+    df = df.rename(columns={"default payment next month": "default"}).drop(columns=["ID"])
+    df = df[df["MARRIAGE"] != 0]
+    df = df[df["EDUCATION"] != 0]
+    df["EDUCATION"] = df["EDUCATION"].apply(lambda x: x if x < 4 else 4)
+    return df
+
+def preparar_datos(df):
+    return df.drop(columns=["default"]), df["default"]
+
+def construir_pipeline():
+    features = ["SEX", "EDUCATION", "MARRIAGE"]
+    transformador = ColumnTransformer(
+        transformers=[("cat", OneHotEncoder(handle_unknown="ignore"), features)],
+        remainder="passthrough",
+    )
+    modelo = RandomForestClassifier(random_state=42)
+    return Pipeline([("transformador", transformador), ("clasificador", modelo)])
+
+def configurar_busqueda(pipeline):
+    grid = {
+        "clasificador__n_estimators": [50, 100, 200],
+        "clasificador__max_depth": [None, 5, 10, 20],
+        "clasificador__min_samples_split": [2, 5, 10],
+        "clasificador__min_samples_leaf": [1, 2, 4],
+    }
+    return GridSearchCV(
+        estimator=pipeline,
+        param_grid=grid,
+        cv=10,
+        scoring="balanced_accuracy",
+        n_jobs=-1,
+        verbose=2,
+        refit=True,
+    )
+
+def save_modelo(ruta, modelo):
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with gzip.open(ruta, "wb") as f:
+        pickle.dump(modelo, f)
+
+def calcular_metricas(tipo, y_real, y_pred):
+    return {
+        "type": "metrics",
+        "dataset": tipo,
+        "precision": precision_score(y_real, y_pred, zero_division=0),
+        "balanced_accuracy": balanced_accuracy_score(y_real, y_pred),
+        "recall": recall_score(y_real, y_pred, zero_division=0),
+        "f1_score": f1_score(y_real, y_pred, zero_division=0),
+    }
+
+def matriz_confusion(tipo, y_real, y_pred):
+    cm = confusion_matrix(y_real, y_pred)
+    return {
+        "type": "cm_matrix",
+        "dataset": tipo,
+        "true_0": {"predicted_0": int(cm[0][0]), "predicted_1": int(cm[0][1])},
+        "true_1": {"predicted_0": int(cm[1][0]), "predicted_1": int(cm[1][1])},
+    }
+
+def save_metricas(ruta, metricas):
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w") as f:
+        for entrada in metricas:
+            f.write(json.dumps(entrada) + "\n")
+
+def ejecutar_proceso():
+    train_df, test_df = cargar_datos("files/input/train_data.csv.zip", "files/input/test_data.csv.zip")
+    train_df = limpiar_datos(train_df)
+    test_df = limpiar_datos(test_df)
+
+    x_train, y_train = preparar_datos(train_df)
+    x_test, y_test = preparar_datos(test_df)
+
+    pipeline = construir_pipeline()
+    grid_search = configurar_busqueda(pipeline)
+    grid_search.fit(x_train, y_train)
+
+    save_modelo("files/models/model.pkl.gz", grid_search)
+
+    y_train_pred = grid_search.predict(x_train)
+    y_test_pred = grid_search.predict(x_test)
+
+    resultados = [
+        calcular_metricas("train", y_train, y_train_pred),
+        calcular_metricas("test", y_test, y_test_pred),
+        matriz_confusion("train", y_train, y_train_pred),
+        matriz_confusion("test", y_test, y_test_pred),
+    ]
+
+    save_metricas("files/output/metrics.json", resultados)
+
+if __name__ == "__main__":
+    ejecutar_proceso()
