@@ -99,11 +99,11 @@ import gzip
 import json
 import pickle
 import pandas as pd
-from sklearn.model_selection import GridSearchCV
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import (
     precision_score,
     balanced_accuracy_score,
